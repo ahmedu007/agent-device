@@ -22,3 +22,11 @@ export function isMaestroConditionTruthy(condition: string | number | boolean): 
   if (typeof condition === 'number') return condition !== 0 && !Number.isNaN(condition);
   return !FALSY_CONDITION_STRINGS.has(condition);
 }
+
+// A script reading string-typed output leaves (e.g. `${output.done}`) returns "false", not false.
+export function isMaestroScriptResultTruthy(value: unknown): boolean {
+  if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return isMaestroConditionTruthy(value);
+  }
+  return value !== null && value !== undefined;
+}

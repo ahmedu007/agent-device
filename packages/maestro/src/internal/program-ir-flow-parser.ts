@@ -3,6 +3,7 @@ import type {
   MaestroCommand,
   MaestroPlatform,
   MaestroRepeatCommand,
+  MaestroRepeatCondition,
   MaestroRetryCommand,
   MaestroRunFlowCommand,
   MaestroRunFlowCondition,
@@ -121,23 +122,23 @@ export function parseMaestroRepeatCommand(
   const source = sourceAt(commandNode, context);
   const entries = readMapEntries(value, 'repeat', context);
   assertOnlyKeys(entries, 'repeat', ['times', 'commands', 'while'], context);
-  if (hasEntry(entries, 'while')) {
-    invalidAt(
-      'Maestro repeat.while is not supported; use repeat.times.',
-      entryValue(entries, 'while'),
-      context,
-    );
-  }
-  if (!hasEntry(entries, 'times'))
-    invalidAt('Maestro repeat requires times.', commandNode, context);
+  const whileCondition = hasEntry(entries, 'while')
+    ? parseMaestroRepeatCondition(entryValue(entries, 'while'), context)
+    : undefined;
+  if (!hasEntry(entries, 'times') && !whileCondition)
+    invalidAt('Maestro repeat requires times or while.', commandNode, context);
   if (!hasEntry(entries, 'commands'))
     invalidAt('Maestro repeat requires commands.', commandNode, context);
-  return {
+  const times = hasEntry(entries, 'times')
+    ? readRequiredNumeric(entryValue(entries, 'times'), 'repeat.times', context)
+    : undefined;
+  return stripUndefined({
     kind: 'repeat',
     source,
-    times: readRequiredNumeric(entryValue(entries, 'times'), 'repeat.times', context),
+    times,
+    while: whileCondition,
     commands: parseCommands(entryValue(entries, 'commands'), 'repeat.commands', context),
-  };
+  });
 }
 
 export function parseMaestroRetryCommand(
@@ -181,20 +182,46 @@ function parseMaestroRunFlowCondition(
   return stripUndefined({ platform, visible, notVisible, true: truth });
 }
 
+function parseMaestroRepeatCondition(
+  node: Node | null | undefined,
+  context: MaestroProgramParseContext,
+): MaestroRepeatCondition {
+  const name = 'repeat.while';
+  const entries = readMapEntries(node, name, context);
+  assertOnlyKeys(entries, name, ['platform', 'visible', 'notVisible', 'true'], context);
+  if (entries.length === 0) invalidAt('Maestro repeat.while cannot be empty.', node, context);
+
+  const platform = readOptionalEntry(entries, 'platform', (entry) =>
+    parsePlatform(entry, context, `${name}.platform`),
+  );
+  const visible = readOptionalEntry(entries, 'visible', (entry) =>
+    parseMaestroSelector(entry, `${name}.visible`, context),
+  );
+  const notVisible = readOptionalEntry(entries, 'notVisible', (entry) =>
+    parseMaestroSelector(entry, `${name}.notVisible`, context),
+  );
+  const truth = readOptionalEntry(entries, 'true', (entry) =>
+    readConditionTruth(entry, context, `${name}.true`),
+  );
+  return stripUndefined({ platform, visible, notVisible, true: truth });
+}
+
 function readConditionTruth(
   node: Node | null | undefined,
   context: MaestroProgramParseContext,
+  name = 'runFlow.when.true',
 ): boolean | string {
-  const value = readScalarValue(node, 'runFlow.when.true', context);
+  const value = readScalarValue(node, name, context);
   if (typeof value === 'boolean' || typeof value === 'string') return value;
-  invalidAt('Maestro runFlow.when.true expects a boolean or expression string.', node, context);
+  invalidAt(`Maestro ${name} expects a boolean or expression string.`, node, context);
 }
 
 function parsePlatform(
   node: Node | null | undefined,
   context: MaestroProgramParseContext,
+  name = 'runFlow.when.platform',
 ): MaestroPlatform {
-  const value = readRequiredString(node, 'runFlow.when.platform', context).toLowerCase();
+  const value = readRequiredString(node, name, context).toLowerCase();
   if (value === 'android' || value === 'ios' || value === 'web') return value;
-  invalidAt('Maestro runFlow.when.platform expects Android, iOS, or Web.', node, context);
+  invalidAt(`Maestro ${name} expects Android, iOS, or Web.`, node, context);
 }

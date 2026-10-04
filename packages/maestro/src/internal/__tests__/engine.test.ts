@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { AppError } from '@agent-device/kernel/errors';
 import { maestroTestFailure } from '../compatibility-errors.ts';
+import { MAESTRO_COMPATIBILITY_PRESETS } from '../compatibility-policy.ts';
 import { parseMaestroProgram } from '../program-ir-parser.ts';
 import type {
   MaestroObservation,
@@ -677,6 +678,101 @@ describe('executeMaestroProgram', () => {
     expect(
       vi.mocked(port.execute).mock.calls.filter(([request]) => request.command.kind === 'tapOn'),
     ).toHaveLength(3);
+  });
+
+  test('repeat while evaluates JavaScript expressions and retains output updates', async () => {
+    const texts: string[] = [];
+    const port = makePort({
+      execute: vi.fn(async (request) => {
+        if (request.command.kind === 'inputText') texts.push(request.command.text);
+        request.invalidateObservation();
+        return {};
+      }),
+    });
+    const program = parseMaestroProgram(
+      [
+        '---',
+        '- evalScript: ${output.counter = 0}',
+        '- repeat:',
+        '    while:',
+        '      true: "${output.counter < 3}"',
+        '    commands:',
+        '      - inputText: loop',
+        '      - evalScript: ${output.counter++}',
+      ].join('\n'),
+    );
+
+    await executeMaestroProgram(program, port);
+
+    expect(texts).toEqual(['loop', 'loop', 'loop']);
+  });
+
+  test('repeat while observes selectors once per iteration and stops when false', async () => {
+    let checks = 0;
+    const observe = vi.fn(async ({ generation }: Parameters<MaestroRuntimePort['observe']>[0]) => ({
+      generation,
+      matched: ++checks < 3,
+    }));
+    const port = makePort({ observe });
+    const program = parseMaestroProgram(
+      [
+        '---',
+        '- repeat:',
+        '    times: 10',
+        '    while:',
+        '      platform: Android',
+        '      notVisible: ValueX',
+        '    commands:',
+        '      - inputText: loop',
+      ].join('\n'),
+    );
+
+    await executeMaestroProgram(program, port, { platform: 'android' });
+
+    expect(port.execute).toHaveBeenCalledTimes(2);
+    expect(observe).toHaveBeenCalledTimes(3);
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        condition: { kind: 'notVisible', selector: { text: 'ValueX' } },
+        timeoutMs: MAESTRO_COMPATIBILITY_PRESETS.command.optionalTargetLookupTimeoutMs,
+      }),
+    );
+  });
+
+  test('repeat while stops at the times limit even while its condition remains true', async () => {
+    const port = makePort();
+    const program = parseMaestroProgram(
+      [
+        '---',
+        '- repeat:',
+        '    times: 2',
+        '    while:',
+        '      true: true',
+        '    commands:',
+        '      - inputText: loop',
+      ].join('\n'),
+    );
+
+    await executeMaestroProgram(program, port);
+
+    expect(port.execute).toHaveBeenCalledTimes(2);
+  });
+
+  test('repeat while expressions are refused for remote untrusted flows', async () => {
+    const program = parseMaestroProgram(
+      [
+        '---',
+        '- repeat:',
+        '    while:',
+        '      true: "${output.counter < 3}"',
+        '    commands:',
+        '      - inputText: loop',
+      ].join('\n'),
+    );
+
+    await expect(
+      executeMaestroProgram(program, makePort(), { trustedScripts: false }),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   test('evalScript replaces output namespace so shrunken arrays drop stale leaves', async () => {

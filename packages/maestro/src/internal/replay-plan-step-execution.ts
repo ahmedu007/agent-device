@@ -1,7 +1,7 @@
 import { AppError } from '@agent-device/kernel/errors';
 import { stripUndefined } from './shared.ts';
 import { isMaestroTestFailure, maestroTestFailure } from './compatibility-errors.ts';
-import { isMaestroConditionTruthy } from './engine-truthiness.ts';
+import { isMaestroConditionTruthy, isMaestroScriptResultTruthy } from './engine-truthiness.ts';
 import {
   MAESTRO_COMPATIBILITY_PRESETS,
   type MaestroCompatibilityTimingPolicy,
@@ -15,7 +15,7 @@ import {
   resolveNumeric,
   staticConditionMatches,
 } from './engine-flow.ts';
-import type { MaestroRunFlowCondition } from './program-ir.ts';
+import type { MaestroRepeatCondition, MaestroRunFlowCondition } from './program-ir.ts';
 import type {
   MaestroEngineOptions,
   MaestroEngineEvent,
@@ -207,15 +207,10 @@ async function executeOpaqueStep(
       state.executed += 1;
       await executeNestedSteps(step.body, state);
       return;
-    case 'repeat': {
-      const times = readIterationCount(command.times, 0, state.context, 'repeat.times');
+    case 'repeat':
       state.executed += 1;
-      for (let iteration = 0; iteration < times; iteration += 1) {
-        checkpointMaestroCancellation(state.options.signal);
-        await executeNestedSteps(step.body, state);
-      }
+      await executeRepeat(step.body, command.times, command.while, state);
       return;
-    }
     case 'retry': {
       const retries = Math.min(
         readIterationCount(command.maxRetries, 1, state.context, 'retry.maxRetries'),
@@ -234,6 +229,23 @@ async function executeNestedSteps(
 ): Promise<void> {
   for (const step of steps) {
     await executeMaestroReplayPlanStep(step, state);
+  }
+}
+
+async function executeRepeat(
+  steps: readonly MaestroReplayPlanStep[],
+  times: number | string | undefined,
+  condition: MaestroRepeatCondition | undefined,
+  state: MaestroReplayPlanExecutionState,
+): Promise<void> {
+  const maxIterations =
+    times === undefined && condition
+      ? Number.POSITIVE_INFINITY
+      : readIterationCount(times, 0, state.context, 'repeat.times');
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    checkpointMaestroCancellation(state.options.signal);
+    if (condition && !(await repeatConditionMatches(condition, state))) return;
+    await executeNestedSteps(steps, state);
   }
 }
 
@@ -270,6 +282,33 @@ async function flowConditionMatches(
     }
   }
   return true;
+}
+
+async function repeatConditionMatches(
+  condition: MaestroRepeatCondition,
+  state: MaestroReplayPlanExecutionState,
+): Promise<boolean> {
+  const { true: script, ...rest } = condition;
+  if (typeof script !== 'string') return await flowConditionMatches(condition, state);
+  if (!(await scriptConditionMatches(script, state))) return false;
+  return await flowConditionMatches(rest, state);
+}
+
+async function scriptConditionMatches(
+  script: string,
+  state: MaestroReplayPlanExecutionState,
+): Promise<boolean> {
+  if (state.options.trustedScripts === false) {
+    throw new AppError(
+      'UNAUTHORIZED',
+      'Maestro repeat.while.true is not permitted for flows received over the remote daemon surface: ' +
+        'node:vm is not a security sandbox, so an untrusted expression can escape to the host.',
+    );
+  }
+  const { evaluateMaestroEvalScriptCondition } = await import('./engine-eval-script.ts');
+  const result = await evaluateMaestroEvalScriptCondition(script, state.context.values);
+  state.context.replaceOutput(result.outputEnv);
+  return isMaestroScriptResultTruthy(result.value);
 }
 
 async function requireObservation(

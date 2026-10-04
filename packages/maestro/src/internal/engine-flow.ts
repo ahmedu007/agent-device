@@ -8,6 +8,7 @@ import {
 import type {
   MaestroCommand,
   MaestroProgram,
+  MaestroRepeatCondition,
   MaestroRunFlowCommand,
   MaestroRunFlowCondition,
 } from './program-ir.ts';
@@ -19,6 +20,19 @@ export function resolveCommand<T extends { readonly source: MaestroCommand['sour
   command: T,
   context: MaestroExecutionContext,
 ): T {
+  if ('kind' in command && command.kind === 'repeat' && 'while' in command && command.while) {
+    const { while: conditionValue, ...unresolved } = command;
+    const condition = conditionValue as MaestroRepeatCondition;
+    const { true: truth, ...selectors } = condition;
+    return {
+      ...resolveValue(unresolved, context),
+      while: {
+        ...resolveValue(selectors, context),
+        ...(truth === undefined ? {} : { true: truth }),
+      },
+      source: command.source,
+    } as T;
+  }
   return {
     ...resolveValue(command, context),
     source: command.source,

@@ -277,7 +277,12 @@ function opaqueControlCommand(
         ...(command.include.kind === 'file' ? { includePath: command.include.path } : {}),
       });
     case 'repeat':
-      return { kind: command.kind, source: command.source, times: command.times };
+      return stripUndefined({
+        kind: command.kind,
+        source: command.source,
+        times: command.times,
+        while: command.while,
+      });
     case 'retry':
       return stripUndefined({
         kind: command.kind,
