@@ -75,3 +75,56 @@ test('canonical selector projection preserves recursive tree relations', () => {
     containsDescendants: [{ text: 'Save', childOf: { id: 'body' } }],
   });
 });
+
+test('canonicalizes repeat conditions from agent and upstream command shapes', () => {
+  const program = parseMaestroProgram(
+    [
+      '---',
+      '- repeat:',
+      '    while:',
+      '      platform: Android',
+      '      notVisible: Ready',
+      '    commands: []',
+      '- repeat:',
+      '    times: 4',
+      '    while:',
+      '      true: "${output.counter < 3}"',
+      '    commands: []',
+    ].join('\n'),
+  );
+
+  expect(canonicalizeAgentCommands(program)).toEqual([
+    { kind: 'repeat', while: { platform: 'android', notVisible: { text: 'Ready' } } },
+    { kind: 'repeat', times: 4, while: { true: '${output.counter < 3}' } },
+  ]);
+  expect(
+    canonicalizeUpstreamFlow([
+      {
+        type: 'RepeatCommand',
+        fields: {
+          times: null,
+          condition: {
+            platform: 'Android',
+            visible: null,
+            notVisible: { textRegex: 'Ready' },
+            scriptCondition: null,
+          },
+        },
+      },
+      {
+        type: 'RepeatCommand',
+        fields: {
+          times: '4',
+          condition: {
+            visible: null,
+            notVisible: null,
+            scriptCondition: '${output.counter < 3}',
+          },
+        },
+      },
+    ]),
+  ).toEqual([
+    { kind: 'repeat', while: { platform: 'android', notVisible: { text: 'Ready' } } },
+    { kind: 'repeat', times: 4, while: { true: '${output.counter < 3}' } },
+  ]);
+});
