@@ -28,5 +28,6 @@ export function isMaestroScriptResultTruthy(value: unknown): boolean {
   if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
     return isMaestroConditionTruthy(value);
   }
+  if (typeof value === 'bigint') return value !== 0n;
   return value !== null && value !== undefined;
 }

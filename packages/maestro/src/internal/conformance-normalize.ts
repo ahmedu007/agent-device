@@ -9,7 +9,7 @@
 import type {
   MaestroCommand,
   MaestroProgram,
-  MaestroRepeatCondition,
+  MaestroRunFlowCondition,
   MaestroSwipeGesture,
 } from './program-ir.ts';
 import { MAESTRO_COMPATIBILITY_PRESETS } from './compatibility-policy.ts';
@@ -45,7 +45,7 @@ type CanonicalRepeatCondition = {
   platform?: string;
   visible?: CanonicalSelector;
   notVisible?: CanonicalSelector;
-  true?: boolean | string;
+  true?: string;
 };
 
 export type CanonicalCommand =
@@ -585,14 +585,14 @@ function canonicalizeAgentCommand(
 }
 
 function canonicalizeAgentRepeatCondition(
-  condition: MaestroRepeatCondition | undefined,
+  condition: MaestroRunFlowCondition | undefined,
 ): CanonicalRepeatCondition | undefined {
   if (!condition) return undefined;
   return dropUndefined({
     platform: condition.platform,
     visible: condition.visible && canonicalizeAgentSelector(condition.visible),
     notVisible: condition.notVisible && canonicalizeAgentSelector(condition.notVisible),
-    true: condition.true,
+    true: condition.true === undefined ? undefined : String(condition.true),
   });
 }
 

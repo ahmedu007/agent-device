@@ -50,16 +50,19 @@ describe('isMaestroConditionTruthy', () => {
 
 describe('isMaestroScriptResultTruthy', () => {
   test.each([
+    ['', false],
     ['false', false],
     ['0', false],
     [false, false],
     [0, false],
+    [0n, false],
     [null, false],
     [undefined, false],
     ['true', true],
     [1, true],
+    [1n, true],
     [{}, true],
-  ])('%j is %s', (value, expected) => {
+  ])('%o is %s', (value, expected) => {
     expect(isMaestroScriptResultTruthy(value)).toBe(expected);
   });
 });
