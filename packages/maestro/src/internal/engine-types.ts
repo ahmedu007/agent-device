@@ -2,7 +2,6 @@ import type {
   MaestroCommand,
   MaestroPlatform,
   MaestroProgram,
-  MaestroRepeatCondition,
   MaestroSelector,
   MaestroSourceLocation,
 } from './program-ir.ts';
@@ -25,7 +24,7 @@ export type MaestroControlCommandDescriptor =
       readonly kind: 'repeat';
       readonly source: MaestroSourceLocation;
       readonly times?: number | string;
-      readonly while?: MaestroRepeatCondition;
+      readonly while?: Extract<MaestroControlCommand, { kind: 'repeat' }>['while'];
     }
   | {
       readonly kind: 'retry';

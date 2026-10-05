@@ -242,11 +242,6 @@ export type MaestroRunFlowCondition = {
   true?: boolean | string;
 };
 
-export type MaestroRepeatCondition = Pick<
-  MaestroRunFlowCondition,
-  'platform' | 'visible' | 'notVisible' | 'true'
->;
-
 export type MaestroRunFlowCommand = {
   kind: 'runFlow';
   source: MaestroSourceLocation;
@@ -260,7 +255,7 @@ export type MaestroRepeatCommand = {
   kind: 'repeat';
   source: MaestroSourceLocation;
   times?: number | string;
-  while?: MaestroRepeatCondition;
+  while?: MaestroRunFlowCondition;
   commands: MaestroCommand[];
 };
 

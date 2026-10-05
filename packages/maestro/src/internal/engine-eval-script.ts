@@ -13,26 +13,29 @@ export async function evaluateMaestroEvalScript(
   script: string,
   values: Readonly<Record<string, string>>,
 ): Promise<Record<string, string>> {
-  return (await executeMaestroJavaScript(script, values, 'evalScript')).outputEnv;
+  return (await executeMaestroJavaScript(script, values, 'evalScript', {})).outputEnv;
 }
 
-export async function evaluateMaestroEvalScriptCondition(
+export async function evaluateMaestroConditionScript(
   script: string,
   values: Readonly<Record<string, string>>,
+  platform: string | undefined,
+  field: string,
 ): Promise<{ value: unknown; outputEnv: Record<string, string> }> {
-  return await executeMaestroJavaScript(script, values, 'repeat.while.true');
+  return await executeMaestroJavaScript(script, values, field, { maestro: { platform } });
 }
 
 async function executeMaestroJavaScript(
   script: string,
   values: Readonly<Record<string, string>>,
-  name: 'evalScript' | 'repeat.while.true',
+  name: string,
+  bindings: Record<string, unknown>,
 ): Promise<{ value: unknown; outputEnv: Record<string, string> }> {
   const output = seedMaestroOutput(values);
   const expression = unwrapMaestroEvalScriptExpression(script);
   // ponytail: function-scoped import keeps node:vm out of the maestro eager closure.
   const { default: vm } = await import('node:vm');
-  const sandbox: Record<string, unknown> = { ...values, output };
+  const sandbox: Record<string, unknown> = { ...values, ...bindings, output };
   let value: unknown;
   try {
     value = vm.runInNewContext(expression, sandbox, {

@@ -1,21 +1,22 @@
 import { AppError } from '@agent-device/kernel/errors';
 import { stripUndefined } from './shared.ts';
 import { isMaestroTestFailure, maestroTestFailure } from './compatibility-errors.ts';
-import { isMaestroConditionTruthy, isMaestroScriptResultTruthy } from './engine-truthiness.ts';
+import { isMaestroConditionTruthy } from './engine-truthiness.ts';
 import {
   MAESTRO_COMPATIBILITY_PRESETS,
   type MaestroCompatibilityTimingPolicy,
 } from './compatibility-policy.ts';
 import type { MaestroExecutionContext } from './engine-context.ts';
 import {
+  assertMaestroScriptsTrusted,
   checkpointMaestroCancellation,
+  conditionTruthMatches,
   observationConditions,
   readIterationCount,
   resolveCommand,
   resolveNumeric,
-  staticConditionMatches,
 } from './engine-flow.ts';
-import type { MaestroRepeatCondition, MaestroRunFlowCondition } from './program-ir.ts';
+import type { MaestroRunFlowCondition } from './program-ir.ts';
 import type {
   MaestroEngineOptions,
   MaestroEngineEvent,
@@ -113,13 +114,7 @@ async function executeEvalScript(
 ): Promise<undefined> {
   // ponytail: function-scoped import keeps engine-eval-script (and node:vm) out of the maestro eager closure.
   const { evaluateMaestroEvalScript } = await import('./engine-eval-script.ts');
-  if (state.options.trustedScripts === false) {
-    throw new AppError(
-      'UNAUTHORIZED',
-      'Maestro evalScript is not permitted for flows received over the remote daemon surface: ' +
-        'node:vm is not a security sandbox, so an untrusted expression can escape to the host.',
-    );
-  }
+  assertMaestroScriptsTrusted(state.options, 'evalScript');
   const outputEnv = await evaluateMaestroEvalScript(command.script, state.context.values);
   state.context.replaceOutput(outputEnv);
   state.executed += 1;
@@ -197,10 +192,10 @@ async function executeOpaqueStep(
   step: MaestroReplayPlanOpaqueStep,
   state: MaestroReplayPlanExecutionState,
 ): Promise<void> {
-  const command = resolveCommand(step.command, state.context);
+  const command = step.command;
   switch (command.kind) {
     case 'runFlow':
-      if (command.when && !(await flowConditionMatches(command.when, state))) {
+      if (command.when && !(await conditionMatches(command.when, 'runFlow.when', state))) {
         state.skipped += 1;
         return;
       }
@@ -235,7 +230,7 @@ async function executeNestedSteps(
 async function executeRepeat(
   steps: readonly MaestroReplayPlanStep[],
   times: number | string | undefined,
-  condition: MaestroRepeatCondition | undefined,
+  condition: MaestroRunFlowCondition | undefined,
   state: MaestroReplayPlanExecutionState,
 ): Promise<void> {
   const maxIterations =
@@ -243,8 +238,10 @@ async function executeRepeat(
       ? Number.POSITIVE_INFINITY
       : readIterationCount(times, 0, state.context, 'repeat.times');
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    // A synchronous body (e.g. only evalScript) would otherwise starve cancellation timers.
+    await new Promise((resolve) => setImmediate(resolve));
     checkpointMaestroCancellation(state.options.signal);
-    if (condition && !(await repeatConditionMatches(condition, state))) return;
+    if (condition && !(await conditionMatches(condition, 'repeat.while', state))) return;
     await executeNestedSteps(steps, state);
   }
 }
@@ -270,45 +267,24 @@ async function executeRetry(
   throw new AppError('COMMAND_FAILED', 'Maestro retry commands failed.');
 }
 
-async function flowConditionMatches(
+async function conditionMatches(
   condition: MaestroRunFlowCondition,
+  field: 'runFlow.when' | 'repeat.while',
   state: MaestroReplayPlanExecutionState,
 ): Promise<boolean> {
-  if (!staticConditionMatches(condition, state.context, state.options)) return false;
-  for (const observation of observationConditions(condition)) {
+  if (condition.platform && condition.platform !== state.options.platform) return false;
+  if (
+    !(await conditionTruthMatches(condition.true, `${field}.true`, state.context, state.options))
+  ) {
+    return false;
+  }
+  for (const observation of observationConditions(condition, state.context)) {
     checkpointMaestroCancellation(state.options.signal);
     if (!(await observe(observation, state.timing.runFlowConditionTimeoutMs, state)).matched) {
       return false;
     }
   }
   return true;
-}
-
-async function repeatConditionMatches(
-  condition: MaestroRepeatCondition,
-  state: MaestroReplayPlanExecutionState,
-): Promise<boolean> {
-  const { true: script, ...rest } = condition;
-  if (typeof script !== 'string') return await flowConditionMatches(condition, state);
-  if (!(await scriptConditionMatches(script, state))) return false;
-  return await flowConditionMatches(rest, state);
-}
-
-async function scriptConditionMatches(
-  script: string,
-  state: MaestroReplayPlanExecutionState,
-): Promise<boolean> {
-  if (state.options.trustedScripts === false) {
-    throw new AppError(
-      'UNAUTHORIZED',
-      'Maestro repeat.while.true is not permitted for flows received over the remote daemon surface: ' +
-        'node:vm is not a security sandbox, so an untrusted expression can escape to the host.',
-    );
-  }
-  const { evaluateMaestroEvalScriptCondition } = await import('./engine-eval-script.ts');
-  const result = await evaluateMaestroEvalScriptCondition(script, state.context.values);
-  state.context.replaceOutput(result.outputEnv);
-  return isMaestroScriptResultTruthy(result.value);
 }
 
 async function requireObservation(

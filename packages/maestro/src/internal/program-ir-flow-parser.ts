@@ -3,7 +3,6 @@ import type {
   MaestroCommand,
   MaestroPlatform,
   MaestroRepeatCommand,
-  MaestroRepeatCondition,
   MaestroRetryCommand,
   MaestroRunFlowCommand,
   MaestroRunFlowCondition,
@@ -100,7 +99,7 @@ export function parseMaestroRunFlowCommand(
     ? readScalarMap(entryValue(entries, 'env'), 'runFlow.env', context)
     : undefined;
   const when = hasEntry(entries, 'when')
-    ? parseMaestroRunFlowCondition(entryValue(entries, 'when'), context)
+    ? parseMaestroCondition(entryValue(entries, 'when'), 'runFlow.when', context)
     : undefined;
   const label = readMaestroCommandLabel(entries, 'runFlow', context);
   return stripUndefined({
@@ -123,7 +122,7 @@ export function parseMaestroRepeatCommand(
   const entries = readMapEntries(value, 'repeat', context);
   assertOnlyKeys(entries, 'repeat', ['times', 'commands', 'while'], context);
   const whileCondition = hasEntry(entries, 'while')
-    ? parseMaestroRepeatCondition(entryValue(entries, 'while'), context)
+    ? parseMaestroCondition(entryValue(entries, 'while'), 'repeat.while', context)
     : undefined;
   if (!hasEntry(entries, 'times') && !whileCondition)
     invalidAt('Maestro repeat requires times or while.', commandNode, context);
@@ -163,33 +162,14 @@ export function parseMaestroRetryCommand(
   });
 }
 
-function parseMaestroRunFlowCondition(
+function parseMaestroCondition(
   node: Node | null | undefined,
+  name: 'runFlow.when' | 'repeat.while',
   context: MaestroProgramParseContext,
 ): MaestroRunFlowCondition {
-  const entries = readMapEntries(node, 'runFlow.when', context);
-  assertOnlyKeys(entries, 'runFlow.when', ['platform', 'visible', 'notVisible', 'true'], context);
-  if (entries.length === 0) invalidAt('Maestro runFlow.when cannot be empty.', node, context);
-
-  const platform = readOptionalEntry(entries, 'platform', (entry) => parsePlatform(entry, context));
-  const visible = readOptionalEntry(entries, 'visible', (entry) =>
-    parseMaestroSelector(entry, 'runFlow.when.visible', context),
-  );
-  const notVisible = readOptionalEntry(entries, 'notVisible', (entry) =>
-    parseMaestroSelector(entry, 'runFlow.when.notVisible', context),
-  );
-  const truth = readOptionalEntry(entries, 'true', (entry) => readConditionTruth(entry, context));
-  return stripUndefined({ platform, visible, notVisible, true: truth });
-}
-
-function parseMaestroRepeatCondition(
-  node: Node | null | undefined,
-  context: MaestroProgramParseContext,
-): MaestroRepeatCondition {
-  const name = 'repeat.while';
   const entries = readMapEntries(node, name, context);
   assertOnlyKeys(entries, name, ['platform', 'visible', 'notVisible', 'true'], context);
-  if (entries.length === 0) invalidAt('Maestro repeat.while cannot be empty.', node, context);
+  if (entries.length === 0) invalidAt(`Maestro ${name} cannot be empty.`, node, context);
 
   const platform = readOptionalEntry(entries, 'platform', (entry) =>
     parsePlatform(entry, context, `${name}.platform`),
@@ -209,7 +189,7 @@ function parseMaestroRepeatCondition(
 function readConditionTruth(
   node: Node | null | undefined,
   context: MaestroProgramParseContext,
-  name = 'runFlow.when.true',
+  name: string,
 ): boolean | string {
   const value = readScalarValue(node, name, context);
   if (typeof value === 'boolean' || typeof value === 'string') return value;
@@ -219,7 +199,7 @@ function readConditionTruth(
 function parsePlatform(
   node: Node | null | undefined,
   context: MaestroProgramParseContext,
-  name = 'runFlow.when.platform',
+  name: string,
 ): MaestroPlatform {
   const value = readRequiredString(node, name, context).toLowerCase();
   if (value === 'android' || value === 'ios' || value === 'web') return value;
